@@ -1,0 +1,115 @@
+---
+title: "Practical Machine Learning Course Project"
+output: html_document
+date: "21 June 2018"
+---
+##Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
+
+##Load Data and Libraries
+```{r setup, message=FALSE}
+library(caret)
+library(RANN)
+library(randomForest)
+traindata<-read.csv("pml-training.csv", na.strings = c("", "NA","#DIV/0!"))
+testdata<-read.csv("pml-testing.csv", na.strings = c("", "NA","#DIV/0!"))
+```
+
+##Data Checks and Preparation
+####Check data dimension
+```{r message=FALSE}
+dim(traindata)
+dim(testdata)
+```
+
+####Check for missing value
+```{r message=FALSE}
+sapply(traindata, function(x) sum(is.na(x)))
+```
+There seems to be some variables with significant amount of missing values.
+
+####Cleaning data
+- Removing varibles with missing or NA values, setting cutoff threshold for missing values at 50%
+i.e. Variables with more than 50% values missing are excluded
+
+- Remove observation ids, timestamp and other indexing variables, these can cause bias to the model fitting process
+
+```{r message=FALSE}
+miss_cutoff <- 0.5*dim(traindata)[1]
+traindata <- traindata[,(sapply(traindata, function(x) sum(is.na(x))) < miss_cutoff)]
+traindata <- traindata[, -(1:7)]
+dim(traindata)
+```
+53 variables are kept after removing variables with significant missing values 
+
+####Preprocess data
+The aim here is to preprocess the cleaned training and test data:
+
+- Remove variables with large proportion of the same value, the variance of these variables are near zero and therefore will not be significant in the prediction
+
+- Center and scale is to standardise the numeric variables into standard normal values, this process can assist to remove bias caused by extreme values.
+
+- K-nearest neighbors method is used to impute missing values based on the average of known values of most similar observations.
+
+```{r message=FALSE}
+set.seed(12345)
+nearzero <- nearZeroVar(traindata, saveMetrics = TRUE)
+traindata <- traindata[,nearzero$nzv==FALSE]
+preproc <- preProcess(traindata, method=c("center", "scale", "knnImpute"))
+traindata_pre <- predict(preproc, traindata)
+testdata_pre <- predict(preproc, testdata)
+```
+
+
+##Modelling
+
+####Partitions
+Spliting the modelling dataset into training and validation
+```{r message=FALSE}
+set.seed(12345)
+partition <- createDataPartition(traindata_pre$classe, p=0.70, list = FALSE)
+traindata_m <- traindata_pre[partition,]
+traindata_v <- traindata_pre[-partition,]
+```
+
+
+####Model Fitting
+Gradient Boosting
+```{r message=FALSE, echo=FALSE, results='hide'}
+gbmcontrol <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
+gbmmodel <- train(data=traindata_m, classe~., method="gbm",trControl=gbmcontrol)
+```
+
+Random Forest
+```{r message=FALSE, echo=FALSE, results='hide'}
+rfcontrol <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
+rfmodel <- train(data=traindata_m, classe~., method="rf",trControl=rfcontrol)
+```
+
+####Model Comparison and Selection
+```{r message=FALSE}
+summary(gbmmodel, plotit=FALSE)
+varImp(rfmodel)
+
+predGBM <- predict(gbmmodel, traindata_v)
+predRF <- predict(rfmodel, traindata_v)
+
+confGBM <- confusionMatrix(traindata_v$classe, predGBM)
+confRF <- confusionMatrix(traindata_v$classe, predRF)
+
+confGBM
+confRF
+
+```
+Comparing the two models, RandomForest has an overall higher accuracy for out of sample error testing. RandomForest is chosen to be the final model.
+
+##Application
+Applying the best model to the test data set
+```{r message=FALSE}
+predFinal <- predict(rfmodel, testdata_pre)
+predFinal
+```
+
+
+
+
